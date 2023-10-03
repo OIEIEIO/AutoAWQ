@@ -208,3 +208,89 @@ class WQLinear_GEMV(nn.Module):
         return 'in_features={}, out_features={}, bias={}, w_bit={}, group_size={}'.format(
             self.in_features, self.out_features, self.bias is not None, self.w_bit, self.group_size
         )
+
+class WQLinear_TORCH(nn.Module):
+    def __init__(self, weight, zeros, scales, bias, w_bit, group_size, in_features, out_features):
+        super().__init__()
+        
+        if w_bit not in [4]:
+            raise NotImplementedError("Only 4-bit are supported for now.")
+        
+        self.in_features = in_features
+        self.out_features = out_features
+        self.w_bit = w_bit
+        self.group_size = group_size if group_size != -1 else in_features
+        self.weight = weight
+        self.zeros = zeros
+        self.scales = scales
+        self.bias = bias
+
+    @classmethod
+    def from_wqlinear_gemm(cls, linear: WQLinear_GEMM):
+        """
+        Reverse the packing of the original GEMM method.
+        """
+        dev = linear.qweight.device
+        pack_num = 32//linear.w_bit
+        order_map = [0, 2, 4, 6, 1, 3, 5, 7]
+        assert(linear.w_bit == 4, "Only 4-bit are supported for now.")
+
+        unpacked_weight = torch.zeros((linear.in_features, linear.out_features), dtype=torch.int32, device=dev)
+        unpacked_zeros = torch.zeros((linear.in_features // linear.group_size, linear.out_features), dtype=torch.int32, device=dev)
+
+        for col in range(linear.out_features):
+            for i in range(pack_num):
+                unpacked_weight[:, col*pack_num + order_map[i]] = (linear.qweight[:, col] >> i*linear.w_bit) & 15
+
+        for col in range(linear.out_features):
+            for i in range(pack_num):
+                unpacked_zeros[:, col*pack_num + order_map[i]] = (linear.qzeros[:, col] >> i*linear.w_bit) & 15 
+        
+        unpacked_weight = unpacked_weight.T
+        unpacked_zeros = unpacked_zeros.T
+        
+        return WQLinear_TORCH(
+            weight=unpacked_weight,
+            zeros=unpacked_zeros,
+            scales=linear.scales,
+            bias=linear.bias,
+            w_bit=linear.w_bit,
+            group_size=linear.group_size,
+            in_features=linear.in_features,
+            out_features=linear.out_features
+        )
+    
+    def dequantize(self) -> torch.Tensor:
+        """
+        Perform channel-wise dequantization of weights
+
+        Dequantization of weights:
+        dq_weight = q_weight * scale - zeros * scale
+        """
+        dequantized_weight = torch.zeros((self.out_features, self.in_features), dtype=torch.float16, device=self.weight.device)
+
+        for input_channel in range(self.in_features):
+            weights = self.weight[:, input_channel].to(torch.float16)
+            zeros = self.zeros[:, input_channel // self.group_size].to(torch.float16)
+            scales = self.scales.T[:, input_channel // self.group_size]
+            dequantized_weight[:, input_channel] = (weights - zeros) * scales
+        
+        return dequantized_weight
+
+    @torch.no_grad()
+    def forward(self, x):
+        """
+        Dequantizes the weights from INT4 to FP16 during inference.
+
+        q_y = (q_w * q_x) + z_y
+        q_y: inference output
+        q_w: quantized weights
+        """
+        out_shape = x.shape[:-1] + (self.out_features, )
+        out = nn.functional.linear(x, self.dequantize(x), self.bias)
+        return out.reshape(out_shape)
+    
+    def extra_repr(self) -> str:
+        return 'in_features={}, out_features={}, bias={}, w_bit={}, group_size={}'.format(
+            self.in_features, self.out_features, self.bias is not None, self.w_bit, self.group_size
+        )
