@@ -224,6 +224,7 @@ class WQLinear_TORCH(nn.Module):
         self.zeros = zeros
         self.scales = scales
         self.bias = bias
+        self.preferred_dtype = torch.float32
 
     @classmethod
     def from_wqlinear_gemm(cls, linear: WQLinear_GEMM):
@@ -267,21 +268,21 @@ class WQLinear_TORCH(nn.Module):
         Dequantization of weights:
         dq_weight = q_weight * scale - zeros * scale
         """
-        # Initialize dequantized_weight with the same values as self.weight but in float16
-        dequantized_weight: torch.Tensor = self.weight.clone().to(dtype=torch.float16, device=self.weight.device)
+        # Clone self.weight to float16 for in-place operations without affecting the original weight
+        dequantized_weight = self.weight.clone().to(dtype=self.preferred_dtype, device=self.weight.device)
         
-        # Expand dimensions for broadcasting
-        zeros_expanded = self.zeros[:, None, :].expand(
-            -1, self.in_features // self.group_size, -1).reshape(-1).to(dtype=torch.float16, device=dequantized_weight.device)
+        # Remove unnecessary dimensions and expand for broadcasting
+        zeros_expanded = self.zeros.squeeze()[:, None]
+        scales_expanded = self.scales.squeeze()[:, None]
         
-        scales_expanded = self.scales.T[:, None, :].expand(
-            -1, self.in_features // self.group_size, -1).reshape(-1).to(dtype=torch.float16, device=dequantized_weight.device)
+        # Convert to the same dtype and device as dequantized_weight
+        zeros_expanded = zeros_expanded.to(dtype=self.preferred_dtype, device=dequantized_weight.device)
+        scales_expanded = scales_expanded.to(dtype=self.preferred_dtype, device=dequantized_weight.device)
 
         # Perform channel-wise dequantization using in-place operations
         dequantized_weight.sub_(zeros_expanded).mul_(scales_expanded)
 
         return dequantized_weight
-
 
     @torch.no_grad()
     def forward(self, x):
@@ -292,9 +293,7 @@ class WQLinear_TORCH(nn.Module):
         q_y: inference output
         q_w: quantized weights
         """
-        out_shape = x.shape[:-1] + (self.out_features, )
-        out = nn.functional.linear(x, self.dequantize(x), self.bias)
-        return out.reshape(out_shape)
+        return nn.functional.linear(x.to(self.preferred_dtype), self.dequantize())
     
     def extra_repr(self) -> str:
         return 'in_features={}, out_features={}, bias={}, w_bit={}, group_size={}'.format(
