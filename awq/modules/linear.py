@@ -238,11 +238,11 @@ class WQLinear_TORCH(nn.Module):
         unpacked_weight = torch.zeros((linear.in_features, linear.out_features), dtype=torch.int32, device=dev)
         unpacked_zeros = torch.zeros((linear.in_features // linear.group_size, linear.out_features), dtype=torch.int32, device=dev)
 
-        for col in range(linear.out_features):
+        for col in range(linear.qweight.shape[1]):
             for i in range(pack_num):
                 unpacked_weight[:, col*pack_num + order_map[i]] = (linear.qweight[:, col] >> i*linear.w_bit) & 15
 
-        for col in range(linear.out_features):
+        for col in range(linear.qzeros.shape[1]):
             for i in range(pack_num):
                 unpacked_zeros[:, col*pack_num + order_map[i]] = (linear.qzeros[:, col] >> i*linear.w_bit) & 15 
         
