@@ -90,69 +90,73 @@ def get_compute_capabilities():
 
     return capability_flags
 
-check_dependencies()
-include_dirs = get_include_dirs()
-generator_flags = get_generator_flag()
-arch_flags = get_compute_capabilities()
+include_dirs = []
+cpu_only_install = os.getenv("CPU_ONLY", "0") == "1"
 
-if os.name == "nt":
-    include_arch = os.getenv("INCLUDE_ARCH", "1") == "1"
+if not cpu_only_install:
+    check_dependencies()
+    include_dirs = get_include_dirs()
+    generator_flags = get_generator_flag()
+    arch_flags = get_compute_capabilities()
 
-    # Relaxed args on Windows
-    if include_arch:
-        extra_compile_args={"nvcc": arch_flags}
+    if os.name == "nt":
+        include_arch = os.getenv("INCLUDE_ARCH", "1") == "1"
+
+        # Relaxed args on Windows
+        if include_arch:
+            extra_compile_args={"nvcc": arch_flags}
+        else:
+            extra_compile_args={}
     else:
-        extra_compile_args={}
-else:
-    extra_compile_args={
-        "cxx": ["-g", "-O3", "-fopenmp", "-lgomp", "-std=c++17", "-DENABLE_BF16"],
-        "nvcc": [
-            "-O3", 
-            "-std=c++17",
-            "-DENABLE_BF16",
-            "-U__CUDA_NO_HALF_OPERATORS__",
-            "-U__CUDA_NO_HALF_CONVERSIONS__",
-            "-U__CUDA_NO_BFLOAT16_OPERATORS__",
-            "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
-            "-U__CUDA_NO_BFLOAT162_OPERATORS__",
-            "-U__CUDA_NO_BFLOAT162_CONVERSIONS__",
-            "--expt-relaxed-constexpr",
-            "--expt-extended-lambda",
-            "--use_fast_math",
-        ] + arch_flags + generator_flags
-    }
+        extra_compile_args={
+            "cxx": ["-g", "-O3", "-fopenmp", "-lgomp", "-std=c++17", "-DENABLE_BF16"],
+            "nvcc": [
+                "-O3", 
+                "-std=c++17",
+                "-DENABLE_BF16",
+                "-U__CUDA_NO_HALF_OPERATORS__",
+                "-U__CUDA_NO_HALF_CONVERSIONS__",
+                "-U__CUDA_NO_BFLOAT16_OPERATORS__",
+                "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
+                "-U__CUDA_NO_BFLOAT162_OPERATORS__",
+                "-U__CUDA_NO_BFLOAT162_CONVERSIONS__",
+                "--expt-relaxed-constexpr",
+                "--expt-extended-lambda",
+                "--use_fast_math",
+            ] + arch_flags + generator_flags
+        }
 
-extensions = [
-    CUDAExtension(
-        "awq_inference_engine",
-        [
-            "awq_cuda/pybind_awq.cpp",
-            "awq_cuda/quantization/gemm_cuda_gen.cu",
-            "awq_cuda/layernorm/layernorm.cu",
-            "awq_cuda/position_embedding/pos_encoding_kernels.cu",
-            "awq_cuda/quantization/gemv_cuda.cu"
-        ], extra_compile_args=extra_compile_args
-    )
-]
-
-if os.name != "nt":
-    extensions.append(
+    extensions = [
         CUDAExtension(
-            "ft_inference_engine",
+            "awq_inference_engine",
             [
-                "awq_cuda/pybind_ft.cpp",
-                "awq_cuda/attention/ft_attention.cpp",
-                "awq_cuda/attention/decoder_masked_multihead_attention.cu"
+                "awq_cuda/pybind_awq.cpp",
+                "awq_cuda/quantization/gemm_cuda_gen.cu",
+                "awq_cuda/layernorm/layernorm.cu",
+                "awq_cuda/position_embedding/pos_encoding_kernels.cu",
+                "awq_cuda/quantization/gemv_cuda.cu"
             ], extra_compile_args=extra_compile_args
         )
-    )
+    ]
 
-additional_setup_kwargs = {
-    "ext_modules": extensions,
-    "cmdclass": {'build_ext': BuildExtension}
-}
+    if os.name != "nt":
+        extensions.append(
+            CUDAExtension(
+                "ft_inference_engine",
+                [
+                    "awq_cuda/pybind_ft.cpp",
+                    "awq_cuda/attention/ft_attention.cpp",
+                    "awq_cuda/attention/decoder_masked_multihead_attention.cu"
+                ], extra_compile_args=extra_compile_args
+            )
+        )
 
-common_setup_kwargs.update(additional_setup_kwargs)
+    additional_setup_kwargs = {
+        "ext_modules": extensions,
+        "cmdclass": {'build_ext': BuildExtension}
+    }
+
+    common_setup_kwargs.update(additional_setup_kwargs)
 
 setup(
     packages=find_packages(),
