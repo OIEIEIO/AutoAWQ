@@ -1,7 +1,12 @@
 import torch.nn as nn
-import awq_inference_engine
 import torch.nn.functional as F
 from awq.modules.linear import WQLinear_GEMM, WQLinear_GEMV
+
+try:
+    import awq_inference_engine  # with CUDA kernels
+    AWQ_ENGINE_INSTALLED = True
+except:
+    AWQ_ENGINE_INSTALLED = False
 
 class QuantLlamaMLP(nn.Module):
 

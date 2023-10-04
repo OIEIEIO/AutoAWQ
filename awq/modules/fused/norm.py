@@ -1,6 +1,10 @@
 import torch
 from torch import nn
-import awq_inference_engine
+try:
+    import awq_inference_engine  # with CUDA kernels
+    AWQ_ENGINE_INSTALLED = True
+except:
+    AWQ_ENGINE_INSTALLED = False
 
 class FasterTransformerRMSNorm(nn.Module):
     def __init__(self, weight, eps=1e-6):

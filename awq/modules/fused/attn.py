@@ -2,8 +2,13 @@ import os
 import math
 import torch
 import torch.nn as nn
-import awq_inference_engine
 from torch.nn import functional as F
+
+try:
+    import awq_inference_engine  # with CUDA kernels
+    AWQ_ENGINE_INSTALLED = True
+except:
+    AWQ_ENGINE_INSTALLED = False
 
 try:
     import ft_inference_engine
