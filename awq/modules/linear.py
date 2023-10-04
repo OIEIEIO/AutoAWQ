@@ -263,19 +263,25 @@ class WQLinear_TORCH(nn.Module):
     def dequantize(self) -> torch.Tensor:
         """
         Perform channel-wise dequantization of weights
-
+        
         Dequantization of weights:
         dq_weight = q_weight * scale - zeros * scale
         """
-        dequantized_weight = torch.zeros((self.out_features, self.in_features), dtype=torch.float16, device=self.weight.device)
-
-        for input_channel in range(self.in_features):
-            weights = self.weight[:, input_channel].to(torch.float16)
-            zeros = self.zeros[:, input_channel // self.group_size].to(torch.float16)
-            scales = self.scales.T[:, input_channel // self.group_size]
-            dequantized_weight[:, input_channel] = (weights - zeros) * scales
+        # Initialize dequantized_weight with the same values as self.weight but in float16
+        dequantized_weight: torch.Tensor = self.weight.clone().to(dtype=torch.float16, device=self.weight.device)
         
+        # Expand dimensions for broadcasting
+        zeros_expanded = self.zeros[:, None, :].expand(
+            -1, self.in_features // self.group_size, -1).reshape(-1).to(dtype=torch.float16, device=dequantized_weight.device)
+        
+        scales_expanded = self.scales.T[:, None, :].expand(
+            -1, self.in_features // self.group_size, -1).reshape(-1).to(dtype=torch.float16, device=dequantized_weight.device)
+
+        # Perform channel-wise dequantization using in-place operations
+        dequantized_weight.sub_(zeros_expanded).mul_(scales_expanded)
+
         return dequantized_weight
+
 
     @torch.no_grad()
     def forward(self, x):
