@@ -223,9 +223,9 @@ class WQLinear_TORCH(nn.Module):
         self.out_features = out_features
         self.w_bit = w_bit
         self.group_size = group_size if group_size != -1 else in_features
-        self.weight = weight
-        self.zeros = zeros
-        self.scales = scales
+        self.weight = weight.to("cpu")
+        self.zeros = zeros.to("cpu")
+        self.scales = scales.to("cpu")
         self.bias = bias
         self.preferred_dtype = torch.float32
 
@@ -250,8 +250,8 @@ class WQLinear_TORCH(nn.Module):
             for i in range(pack_num):
                 unpacked_zeros[:, col*pack_num + order_map[i]] = (linear.qzeros[:, col] >> i*linear.w_bit) & 15 
         
-        unpacked_weight = unpacked_weight.to("cpu")
-        unpacked_zeros = unpacked_zeros.to("cpu")
+        unpacked_weight = unpacked_weight.T
+        unpacked_zeros = unpacked_zeros.T
         
         return WQLinear_TORCH(
             weight=unpacked_weight,
@@ -271,19 +271,27 @@ class WQLinear_TORCH(nn.Module):
         Dequantization of weights:
         dq_weight = q_weight * scale - zeros * scale
         """
-        # Clone self.weight to float16 for in-place operations without affecting the original weight
-        dequantized_weight = self.weight.clone().to(dtype=self.preferred_dtype, device=self.weight.device)
+        # # Clone self.weight to float16 for in-place operations without affecting the original weight
+        # dequantized_weight = self.weight.clone().to(dtype=self.preferred_dtype, device=self.weight.device)
         
-        # Remove unnecessary dimensions and expand for broadcasting
-        zeros_expanded = self.zeros.squeeze()[:, None]
-        scales_expanded = self.scales.squeeze()[:, None]
-        
-        # Convert to the same dtype and device as dequantized_weight
-        zeros_expanded = zeros_expanded.to(dtype=self.preferred_dtype, device=dequantized_weight.device)
-        scales_expanded = scales_expanded.to(dtype=self.preferred_dtype, device=dequantized_weight.device)
+        # # Get scales and zeros
+        # zeros_expanded = self.zeros.to(dtype=self.preferred_dtype, device=dequantized_weight.device)
+        # scales_expanded = self.scales.to(dtype=self.preferred_dtype, device=dequantized_weight.device)
 
-        # Perform channel-wise dequantization using in-place operations
-        dequantized_weight.sub_(zeros_expanded).mul_(scales_expanded)
+        # print("dequantized_weight shape:", dequantized_weight.shape)
+        # print("zeros_expanded shape:", zeros_expanded.shape)
+        # print("scales_expanded shape:", scales_expanded.shape)
+
+        # # Perform channel-wise dequantization using in-place operations
+        # dequantized_weight.sub_(zeros_expanded).mul_(scales_expanded)
+
+        dequantized_weight = self.weight.clone().to(dtype=self.preferred_dtype, device=self.weight.device)
+
+        for input_channel in range(self.in_features):
+            weights = self.weight[:, input_channel].to(torch.float16)
+            zeros = self.zeros[:, input_channel // self.group_size].to(torch.float16)
+            scales = self.scales.T[:, input_channel // self.group_size]
+            dequantized_weight[:, input_channel] = (weights - zeros) * scales
 
         return dequantized_weight
 
@@ -296,7 +304,7 @@ class WQLinear_TORCH(nn.Module):
         q_y: inference output
         q_w: quantized weights
         """
-        return nn.functional.linear(x.to(self.preferred_dtype), self.dequantize())
+        return nn.functional.linear(x.to(self.preferred_dtype).to("cpu"), self.dequantize()).to(self.preferred_dtype)
     
     def extra_repr(self) -> str:
         return 'in_features={}, out_features={}, bias={}, w_bit={}, group_size={}'.format(

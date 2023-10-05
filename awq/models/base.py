@@ -176,7 +176,6 @@ class BaseAWQForCausalLM(nn.Module):
                     torch_gemm.to(module.qweight.device)
                     set_op_by_name(model, name, torch_gemm)
                     clear_memory(module)
-                    break
         
         # Dispath to devices
         if fuse_layers:
@@ -189,6 +188,8 @@ class BaseAWQForCausalLM(nn.Module):
             device_map=device_map,
             offload_dir=offload_folder
         )
+
+        model = model.to("cpu")
 
         return self(model, model_type, is_quantized=is_quantized, quant_config=quant_config)
 
