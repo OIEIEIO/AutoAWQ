@@ -6,14 +6,15 @@ import torch.nn as nn
 from tqdm import tqdm
 from typing import List, Union, Dict
 from safetensors.torch import save_file
+from awq.utils.utils import clear_memory
 from awq.modules.act import ScaledActivation
 from huggingface_hub import snapshot_download
 from awq.quantize.quantizer import AwqQuantizer
 from awq.utils.utils import simple_dispatch_model
 from transformers.modeling_utils import shard_checkpoint
-from awq.modules.linear import WQLinear_GEMM, WQLinear_GEMV
 from awq.utils.module import get_named_linears, set_op_by_name
 from transformers import AutoModelForCausalLM, AutoConfig, PreTrainedModel
+from awq.modules.linear import WQLinear_GEMM, WQLinear_GEMV, WQLinear_TORCH
 from accelerate import init_empty_weights, load_checkpoint_in_model, infer_auto_device_map
 
 class BaseAWQForCausalLM(nn.Module):
@@ -133,8 +134,8 @@ class BaseAWQForCausalLM(nn.Module):
     def from_quantized(self, model_path, model_type, model_filename='', 
                              max_new_tokens=None, torch_dtype=torch.float16, 
                              trust_remote_code=True, safetensors=False, is_quantized=True, 
-                             fuse_layers=False, version='GEMM',
-                             max_memory=None, offload_folder=None):
+                             fuse_layers=False, version='GEMM', max_memory=None, 
+                             offload_folder=None, torch_only=False):
         # [STEP 1-2] Load weights path and configs
         model_weights_path, config, quant_config = self._load_config(
             self, model_path, model_filename, safetensors, version, 
@@ -166,6 +167,16 @@ class BaseAWQForCausalLM(nn.Module):
             offload_folder=offload_folder,
             dtype=torch_dtype
         )
+
+        if torch_only and version == "GEMM":
+            gemm_linears = {name: m for name, m in model.named_modules() if isinstance(m, WQLinear_GEMM)}
+            for name, module in tqdm(gemm_linears.items(), desc="Torch only..."):
+                if isinstance(module, WQLinear_GEMM):
+                    torch_gemm = WQLinear_TORCH.from_wqlinear_gemm(module)
+                    torch_gemm.to(module.qweight.device)
+                    set_op_by_name(model, name, torch_gemm)
+                    clear_memory(module)
+                    break
         
         # Dispath to devices
         if fuse_layers:
@@ -178,7 +189,6 @@ class BaseAWQForCausalLM(nn.Module):
             device_map=device_map,
             offload_dir=offload_folder
         )
-        
 
         return self(model, model_type, is_quantized=is_quantized, quant_config=quant_config)
 
@@ -252,6 +262,7 @@ class BaseAWQForCausalLM(nn.Module):
                     quant_config['q_group_size'],
                     True
                 )
+
                 q_linear.to(next(layer.parameters()).device)
                 set_op_by_name(layer, name, q_linear)
             
