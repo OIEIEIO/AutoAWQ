@@ -250,8 +250,8 @@ class WQLinear_TORCH(nn.Module):
             for i in range(pack_num):
                 unpacked_zeros[:, col*pack_num + order_map[i]] = (linear.qzeros[:, col] >> i*linear.w_bit) & 15 
         
-        unpacked_weight = unpacked_weight.T
-        unpacked_zeros = unpacked_zeros.T
+        unpacked_weight = unpacked_weight.to("cpu")
+        unpacked_zeros = unpacked_zeros.to("cpu")
         
         return WQLinear_TORCH(
             weight=unpacked_weight,
